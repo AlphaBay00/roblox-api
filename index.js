@@ -1,53 +1,36 @@
-const express = require("express");
-const { Pool } = require("pg");
-
-const app = express();
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-pool.query(`
-CREATE TABLE IF NOT EXISTS active_users (
-  player_id TEXT PRIMARY KEY,
-  last_seen BIGINT
-)
-`);
+const { v4: uuidv4 } = require("uuid"); // تحتاج تثبيت مكتبة uuid
 
 app.get("/join", async (req, res) => {
-  const id = req.query.player;
+  const playerId = req.query.player;
+  const sessionId = uuidv4();
   const now = Date.now();
 
   await pool.query(
-    "INSERT INTO active_users VALUES($1,$2) ON CONFLICT (player_id) DO UPDATE SET last_seen=$2",
-    [id, now]
+    "INSERT INTO active_sessions(session_id, player_id, last_seen) VALUES($1,$2,$3)",
+    [sessionId, playerId, now]
   );
 
-  res.send("joined");
+  res.json({ sessionId });
 });
 
 app.get("/heartbeat", async (req, res) => {
-  const id = req.query.player;
+  const sessionId = req.query.session;
   const now = Date.now();
 
   await pool.query(
-    "UPDATE active_users SET last_seen=$1 WHERE player_id=$2",
-    [now, id]
+    "UPDATE active_sessions SET last_seen=$1 WHERE session_id=$2",
+    [now, sessionId]
   );
 
   res.send("alive");
 });
 
 app.get("/count", async (req, res) => {
-  const limit = Date.now() - 120000;
-
+  const limit = Date.now() - 2000; // لو تبي heartbeat كل ثانية، خلي 2 ثانية
   const r = await pool.query(
-    "SELECT COUNT(*) FROM active_users WHERE last_seen > $1",
+    "SELECT COUNT(*) FROM active_sessions WHERE last_seen > $1",
     [limit]
   );
 
   res.json({ online: r.rows[0].count });
 });
-
-app.listen(3000, () => console.log("Running"));

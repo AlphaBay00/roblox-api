@@ -4,14 +4,18 @@ const { randomUUID } = require("crypto");
 
 const app = express();
 
-// اتصال بالداتابيس
+// اتصال الداتابيس
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// دالة لتشغيل السيرفر
+// بدء السيرفر
 async function startServer() {
+
+  // اختبار اتصال الداتابيس
+  await pool.connect();
+  console.log("✅ Database Connected");
 
   // إنشاء جدول الجلسات
   await pool.query(`
@@ -22,50 +26,88 @@ async function startServer() {
     )
   `);
 
-  // تنظيف الجلسات الميتة كل ثانية
+  console.log("✅ Table Ready");
+
+  // حذف الجلسات الميتة كل ثانيتين
   setInterval(async () => {
-    const limit = Date.now() - 2000;
-    await pool.query("DELETE FROM active_sessions WHERE last_seen < $1", [limit]);
-  }, 1000);
+    const limit = Date.now() - 5000;
+    await pool.query(
+      "DELETE FROM active_sessions WHERE last_seen < $1",
+      [limit]
+    );
+  }, 2000);
 
-  // دخول سكربت (جلسة جديدة)
+  // JOIN
   app.get("/join", async (req, res) => {
-    const playerId = req.query.player;
-    const sessionId = randomUUID();
-    const now = Date.now();
+    try {
+      const playerId = req.query.player;
+      if (!playerId) return res.sendStatus(400);
 
-    await pool.query("DELETE FROM active_sessions WHERE player_id=$1", [playerId]);
-    await pool.query("INSERT INTO active_sessions VALUES($1,$2,$3)", [sessionId, playerId, now]);
+      const sessionId = randomUUID();
+      const now = Date.now();
 
-    res.json({ session: sessionId });
+      await pool.query(
+        "DELETE FROM active_sessions WHERE player_id=$1",
+        [playerId]
+      );
+
+      await pool.query(
+        "INSERT INTO active_sessions VALUES($1,$2,$3)",
+        [sessionId, playerId, now]
+      );
+
+      res.json({ session: sessionId });
+    } catch (err) {
+      console.log(err);
+      res.sendStatus(500);
+    }
   });
 
-  // heartbeat
+  // HEARTBEAT
   app.get("/heartbeat", async (req, res) => {
-    const sessionId = req.query.session;
-    const now = Date.now();
+    try {
+      const sessionId = req.query.session;
+      const now = Date.now();
 
-    await pool.query("UPDATE active_sessions SET last_seen=$1 WHERE session_id=$2", [now, sessionId]);
+      await pool.query(
+        "UPDATE active_sessions SET last_seen=$1 WHERE session_id=$2",
+        [now, sessionId]
+      );
 
-    res.send("alive");
+      res.send("alive");
+    } catch {
+      res.sendStatus(500);
+    }
   });
 
-  // عدّ الأونلاين
+  // COUNT
   app.get("/count", async (req, res) => {
-    const limit = Date.now() - 2000;
-    const r = await pool.query("SELECT COUNT(*) FROM active_sessions WHERE last_seen > $1", [limit]);
-    res.json({ online: r.rows[0].count });
+    try {
+      const limit = Date.now() - 5000;
+
+      const r = await pool.query(
+        "SELECT COUNT(*) FROM active_sessions WHERE last_seen > $1",
+        [limit]
+      );
+
+      res.json({ online: Number(r.rows[0].count) });
+    } catch {
+      res.json({ online: 0 });
+    }
   });
 
-  // ✅ ping endpoint لمنع النوم
+  // PING
   app.get("/ping", (req, res) => {
     res.send("pong");
   });
 
   // تشغيل السيرفر
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log("API Running on port", PORT));
+  app.listen(PORT, () =>
+    console.log("🚀 API Running on port", PORT)
+  );
 }
 
-// تشغيل السيرفر
-startServer().catch(err => console.error("Server failed to start:", err));
+startServer().catch(err => {
+  console.error("❌ Server failed:", err);
+});
